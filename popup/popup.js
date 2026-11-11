@@ -1,6 +1,6 @@
 /**
  * YouTube Smart Volume Booster & Auto-Leveler
- * Popup Logic (v1.1.3 - Steppers -0.25/+0.25, Crans x1-x10, Dual Storage Sync)
+ * Popup Logic (v1.1.5 - Steppers -0.25/+0.25, Crans x1-x10, Silent Error Handling)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     targetTabId = tab.id;
-    connectToTab(tab.id);
+    connectToTab(tab);
   });
 
   function findYouTubeTab(callback) {
@@ -84,7 +84,13 @@ document.addEventListener('DOMContentLoaded', () => {
     return url.includes('youtube.com') || url.includes('music.youtube.com');
   }
 
-  function connectToTab(tabId) {
+  function connectToTab(tab) {
+    if (!tab || !tab.id) {
+      markDisconnected('Ouvrez YouTube / YT Music');
+      return;
+    }
+
+    const tabId = tab.id;
     statusText.textContent = 'Connexion...';
 
     chrome.storage.sync.get(['ytBoosterConfig'], (result) => {
@@ -94,18 +100,30 @@ document.addEventListener('DOMContentLoaded', () => {
       renderGlobalConfigUI();
     });
 
+    // Check that we only interact if on YouTube to avoid host permissions error
+    if (!isYouTubeUrl(tab.url)) {
+      markDisconnected('Ouvrez YouTube / YT Music');
+      return;
+    }
+
     chrome.tabs.sendMessage(tabId, { type: 'GET_METRICS' }, (res) => {
       if (chrome.runtime.lastError || !res) {
+        // Content script might need to be injected dynamically
         if (chrome.scripting) {
           chrome.scripting.executeScript(
             { target: { tabId: tabId }, files: ['content.js'] },
             () => {
+              if (chrome.runtime.lastError) {
+                // Must read lastError to prevent "Unchecked runtime.lastError"
+                markDisconnected('Actualisez YouTube (F5)');
+                return;
+              }
               setTimeout(() => {
                 chrome.tabs.sendMessage(tabId, { type: 'GET_METRICS' }, (res2) => {
-                  if (res2) {
-                    onConnected(res2);
-                  } else {
+                  if (chrome.runtime.lastError || !res2) {
                     markDisconnected('Actualisez YouTube (F5)');
+                  } else {
+                    onConnected(res2);
                   }
                 });
               }, 250);
@@ -194,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Instant Dual-Sync (Storage + Message)
   function sendConfigUpdate(newPartial) {
     globalConfig = Object.assign(globalConfig, newPartial);
     chrome.storage.sync.set({ ytBoosterConfig: globalConfig });

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Smart Volume Booster for YouTube™",
   "short_name": "SmartBooster",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Normalise et booste automatiquement le volume des vidéos trop basses sur YouTube avec réglage personnalisé par vidéo.",
   "permissions": [
     "storage",
