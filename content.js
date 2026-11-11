@@ -1,6 +1,6 @@
 /**
  * YouTube Smart Volume Booster & Auto-Leveler
- * Version 1.1.1 - Ultra-reliable audio hook & storage sync
+ * Version 1.1.4 - Clean Web Audio Hook & Error Prevention
  */
 
 (function () {
@@ -20,13 +20,13 @@
   let config = {
     enabled: true,
     mode: 'auto', // 'auto' or 'manual'
-    maxBoost: 3.0,
+    maxBoost: 3.5,
     targetLevel: 0.15,
-    manualGain: 1.8,
+    manualGain: 2.0,
     limiter: true
   };
 
-  // Per-video custom settings: { [videoId]: { gain: 2.2, title: '...', enabled: true } }
+  // Per-video custom settings: { [videoId]: { gain: 2.25, title: '...', enabled: true } }
   let customVideos = {};
 
   // Audio nodes and context
@@ -148,6 +148,7 @@
     try {
       const ctx = getAudioContext();
 
+      // Hook media element into Web Audio
       sourceNode = ctx.createMediaElementSource(mediaEl);
       mediaEl.__smartBoosterHooked = true;
       currentMediaEl = mediaEl;
@@ -207,10 +208,11 @@
 
       applyGainImmediately();
       startAgcLoop();
-      console.log('[SmartBooster] Web Audio graph hooked successfully.');
       return true;
     } catch (err) {
-      console.warn('[SmartBooster] Audio hook notice:', err);
+      // Mark as hooked to prevent repeated error looping
+      mediaEl.__smartBoosterHooked = true;
+      // InvalidStateError occurs only if the tab wasn't refreshed after extension reload
       return false;
     }
   }
@@ -223,7 +225,7 @@
     return null;
   }
 
-  // Instantaneous gain application (zero delay, glitch-free)
+  // Instantaneous gain application
   function applyGainImmediately() {
     if (!audioCtx || !masterGainNode || !agcGainNode || !limiterNode) return;
     const now = audioCtx.currentTime;
@@ -242,7 +244,7 @@
 
     const custom = getCustomSettingForCurrentVideo();
     if (custom) {
-      const targetG = parseFloat(custom.gain) || 1.8;
+      const targetG = parseFloat(custom.gain) || 2.0;
       masterGainNode.gain.cancelScheduledValues(now);
       masterGainNode.gain.setValueAtTime(targetG, now);
       agcGainNode.gain.cancelScheduledValues(now);
@@ -252,7 +254,7 @@
     }
 
     if (config.mode === 'manual') {
-      const manualG = parseFloat(config.manualGain) || 1.8;
+      const manualG = parseFloat(config.manualGain) || 2.0;
       masterGainNode.gain.cancelScheduledValues(now);
       masterGainNode.gain.setValueAtTime(manualG, now);
       agcGainNode.gain.cancelScheduledValues(now);
@@ -314,8 +316,12 @@
     agcLoopId = requestAnimationFrame(loop);
   }
 
+  // Robust selector for the main playing YouTube video
   function scanAndHook() {
-    const media = document.querySelector('video') || document.querySelector('audio');
+    const media = document.querySelector('video.html5-main-video') ||
+                  document.querySelector('#movie_player video') ||
+                  document.querySelector('video') ||
+                  document.querySelector('audio');
     if (media && !media.__smartBoosterHooked) setupAudioGraph(media);
   }
 
@@ -327,7 +333,7 @@
       applyGainImmediately();
       scanAndHook();
     }
-  }, 500);
+  }, 400);
 
   window.addEventListener('yt-navigate-finish', () => {
     detectCurrentVideo();
@@ -365,9 +371,9 @@
           videoId: currentVideoId,
           videoTitle: currentVideoTitle,
           hasCustomForThisVideo: !!custom,
-          customGainForThisVideo: custom ? custom.gain : 2.0
+          customGainForThisVideo: custom ? custom.gain : 2.25
         });
-        return false; // Synchronous response
+        return false;
       } else if (message.type === 'UPDATE_CONFIG') {
         config = Object.assign(config, message.config);
         saveConfig();
@@ -379,7 +385,7 @@
         if (videoId) {
           if (enabled) {
             customVideos[videoId] = {
-              gain: parseFloat(gain) || 2.0,
+              gain: parseFloat(gain) || 2.25,
               title: title || currentVideoTitle || 'Vidéo YouTube',
               enabled: true,
               updatedAt: Date.now()
