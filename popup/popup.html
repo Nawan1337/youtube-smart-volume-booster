@@ -26,12 +26,12 @@
       </label>
     </header>
 
-    <!-- Status & Live Meter -->
+    <!-- Monitor Card (Realtime Audio & Status) -->
     <section class="monitor-card" id="monitorCard">
       <div class="monitor-header">
         <div class="status-indicator">
           <span class="dot" id="statusDot"></span>
-          <span id="statusText">Recherche du lecteur...</span>
+          <span id="statusText">Connexion...</span>
         </div>
         <div class="gain-badge" id="gainBadge">x1.0 (0 dB)</div>
       </div>
@@ -48,7 +48,44 @@
       </div>
     </section>
 
-    <!-- Mode Selector -->
+    <!-- Per-Video Customization Card (New Feature!) -->
+    <section class="video-card" id="videoCard">
+      <div class="video-card-header">
+        <div class="video-info">
+          <span class="video-tag">Vidéo détectée</span>
+          <div class="video-title" id="videoTitleText">Recherche du titre...</div>
+        </div>
+      </div>
+
+      <div class="custom-video-controls">
+        <label class="checkbox-label custom-toggle-label">
+          <input type="checkbox" id="customVideoToggle">
+          <span class="custom-toggle-text">⭐ Mémoriser un gain pour cette vidéo</span>
+        </label>
+
+        <div class="custom-slider-group hidden" id="customSliderGroup">
+          <div class="label-with-value">
+            <span class="sub-label">Volume pour cette vidéo</span>
+            <span class="value-display highlight" id="customGainVal">x2.2</span>
+          </div>
+          <input type="range" id="customGainSlider" min="1.0" max="5.0" step="0.1" value="2.2">
+          <div class="saved-badge">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            Sauvegardé : s'appliquera automatiquement dès que cette vidéo passera !
+          </div>
+          <button class="reset-video-btn" id="resetVideoBtn">Effacer le réglage de cette vidéo</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Global Mode Section Header -->
+    <div class="section-title">Mode général (autres vidéos)</div>
+
+    <!-- Mode Selector Tabs -->
     <div class="mode-tabs">
       <button class="tab active" data-mode="auto" id="tabAuto">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -73,15 +110,15 @@
           <span class="value-display" id="maxBoostVal">x3.0</span>
         </div>
         <input type="range" id="maxBoostSlider" min="1.5" max="5.0" step="0.1" value="3.0">
-        <span class="help-text">Les vidéos faibles sont remontées jusqu'à ce plafond sans saturer les autres.</span>
+        <span class="help-text">Régule automatiquement les vidéos faibles jusqu'à ce plafond sans saturer les autres.</span>
       </div>
 
       <div class="control-row">
-        <label>Profils rapides :</label>
+        <label class="sub-label">Profils rapides :</label>
         <div class="preset-buttons">
           <button class="preset-btn" data-target="0.12" data-max="2.5">Discret</button>
           <button class="preset-btn active" data-target="0.15" data-max="3.0">Mixte (Conseillé)</button>
-          <button class="preset-btn" data-target="0.20" data-max="4.5">Vidéos très basses</button>
+          <button class="preset-btn" data-target="0.22" data-max="4.5">Vidéos très basses</button>
         </div>
       </div>
     </div>
@@ -94,7 +131,7 @@
           <span class="value-display" id="manualGainVal">x1.8</span>
         </div>
         <input type="range" id="manualGainSlider" min="1.0" max="4.0" step="0.1" value="1.8">
-        <span class="help-text">Applique un gain constant à toutes les vidéos (attention aux vidéos fortes).</span>
+        <span class="help-text">Applique un gain constant à toutes les vidéos (attention aux vidéos déjà fortes).</span>
       </div>
     </div>
 

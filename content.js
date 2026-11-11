@@ -1,29 +1,35 @@
 /**
  * YouTube Smart Volume Booster & Auto-Leveler
- * Content Script (YouTube & YouTube Music)
+ * Version 1.1.0 with Per-Video Memory & Real-time Live Controls
  */
 
 (function () {
   'use strict';
 
   // Prevent multiple injections
-  if (window.__yt_smart_booster_loaded) return;
+  if (window.__yt_smart_booster_loaded) {
+    console.log('[SmartBooster] Already loaded in this tab.');
+    return;
+  }
   window.__yt_smart_booster_loaded = true;
 
-  // Default configuration
+  // Global settings
   let config = {
     enabled: true,
-    mode: 'auto', // 'auto' (AGC Leveler) or 'manual' (Fixed Gain)
-    maxBoost: 3.0, // Max multiplier for auto mode (e.g., 3.0 = +9.5 dB)
-    targetLevel: 0.15, // Target RMS level (~ -16.5 dBFS, typical standard YouTube volume)
-    manualGain: 1.8, // Multiplier when in manual mode
-    limiter: true // Brickwall safety limiter
+    mode: 'auto', // 'auto' or 'manual'
+    maxBoost: 3.0,
+    targetLevel: 0.15,
+    manualGain: 1.8,
+    limiter: true
   };
 
-  // Audio nodes and context references
+  // Per-video custom settings: { [videoId]: { gain: 2.2, title: '...', enabled: true } }
+  let customVideos = {};
+
+  // Audio nodes and context
   let audioCtx = null;
   let sourceNode = null;
-  let currentVideoEl = null;
+  let currentMediaEl = null;
 
   let masterGainNode = null;
   let agcGainNode = null;
@@ -31,21 +37,58 @@
   let limiterNode = null;
   let analyserNode = null;
 
-  // Real-time state
+  // Real-time metrics
   let currentRMS = 0;
   let currentGainValue = 1.0;
-  let isVideoPlaying = false;
+  let isMediaPlaying = false;
   let agcLoopId = null;
   let pcmData = null;
+  let currentVideoId = null;
+  let currentVideoTitle = '';
 
-  // Load saved configuration from Chrome storage
-  function loadConfig(callback) {
+  // Extract current video ID and Title from YouTube / YouTube Music
+  function detectCurrentVideo() {
+    try {
+      const url = new URL(window.location.href);
+      let vId = url.searchParams.get('v');
+      if (!vId && url.pathname.startsWith('/shorts/')) {
+        vId = url.pathname.split('/shorts/')[1]?.split('?')[0];
+      }
+
+      // Title detection
+      let title = '';
+      const titleEl = document.querySelector(
+        'h1.ytd-watch-metadata yt-formatted-string, #above-the-fold #title h1 yt-formatted-string, ytmusic-player-bar .title, #content h1.title'
+      );
+      if (titleEl && titleEl.textContent && titleEl.textContent.trim()) {
+        title = titleEl.textContent.trim();
+      } else {
+        title = document.title.replace(' - YouTube', '').replace(' - YouTube Music', '').trim();
+      }
+
+      if (vId) {
+        currentVideoId = vId;
+      }
+      if (title && title !== 'YouTube' && title !== 'YouTube Music') {
+        currentVideoTitle = title;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return { videoId: currentVideoId, title: currentVideoTitle };
+  }
+
+  // Load configuration and per-video settings
+  function loadSettings(callback) {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-      chrome.storage.sync.get(['ytBoosterConfig'], (result) => {
+      chrome.storage.sync.get(['ytBoosterConfig', 'ytCustomVideos'], (result) => {
         if (result && result.ytBoosterConfig) {
           config = Object.assign(config, result.ytBoosterConfig);
         }
-        applyConfigToAudioGraph();
+        if (result && result.ytCustomVideos) {
+          customVideos = Object.assign(customVideos, result.ytCustomVideos);
+        }
+        applyGainImmediately();
         if (callback) callback();
       });
     } else {
@@ -53,18 +96,25 @@
     }
   }
 
-  // Save current configuration
+  // Save global config
   function saveConfig() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
       chrome.storage.sync.set({ ytBoosterConfig: config });
     }
   }
 
-  // Ensure AudioContext is initialized and running
-  function getOrCreateAudioContext() {
+  // Save custom video setting
+  function saveCustomVideos() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+      chrome.storage.sync.set({ ytCustomVideos: customVideos });
+    }
+  }
+
+  // Audio Context initialization
+  function getAudioContext() {
     if (!audioCtx) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AudioContextClass();
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AudioCtx();
     }
     if (audioCtx.state === 'suspended') {
       audioCtx.resume().catch(() => {});
@@ -72,55 +122,49 @@
     return audioCtx;
   }
 
-  // Initialize or update the Web Audio processing graph on the video element
-  function setupAudioGraph(videoEl) {
-    if (!videoEl) return false;
-
-    // Check if this video element is already hooked
-    if (videoEl.__smartBoosterHooked && sourceNode) {
-      return true;
-    }
+  // Attach Web Audio API to media element
+  function setupAudioGraph(mediaEl) {
+    if (!mediaEl) return false;
+    if (mediaEl.__smartBoosterHooked && sourceNode) return true;
 
     try {
-      const ctx = getOrCreateAudioContext();
+      const ctx = getAudioContext();
 
-      // Create nodes
-      sourceNode = ctx.createMediaElementSource(videoEl);
-      videoEl.__smartBoosterHooked = true;
-      currentVideoEl = videoEl;
+      sourceNode = ctx.createMediaElementSource(mediaEl);
+      mediaEl.__smartBoosterHooked = true;
+      currentMediaEl = mediaEl;
 
-      // Master gain node (for ON / OFF bypass or manual gain)
+      // Master Gain Node
       masterGainNode = ctx.createGain();
       masterGainNode.gain.value = 1.0;
 
-      // Dynamic AGC gain node (controlled in real-time)
+      // AGC Dynamic Gain Node
       agcGainNode = ctx.createGain();
       agcGainNode.gain.value = 1.0;
 
-      // Studio dynamic compressor: tames peaks, tightens dynamic range
+      // Dynamic Studio Compressor
       compressorNode = ctx.createDynamicsCompressor();
-      compressorNode.threshold.setValueAtTime(-18, ctx.currentTime); // dB
-      compressorNode.knee.setValueAtTime(12, ctx.currentTime);       // dB
-      compressorNode.ratio.setValueAtTime(6, ctx.currentTime);       // 6:1 ratio
-      compressorNode.attack.setValueAtTime(0.003, ctx.currentTime);  // 3ms attack
-      compressorNode.release.setValueAtTime(0.25, ctx.currentTime);  // 250ms release
+      compressorNode.threshold.setValueAtTime(-16, ctx.currentTime);
+      compressorNode.knee.setValueAtTime(10, ctx.currentTime);
+      compressorNode.ratio.setValueAtTime(6, ctx.currentTime);
+      compressorNode.attack.setValueAtTime(0.003, ctx.currentTime);
+      compressorNode.release.setValueAtTime(0.25, ctx.currentTime);
 
-      // Brickwall safety limiter: prevents any clipping / ear blasting
+      // Brickwall Safety Limiter
       limiterNode = ctx.createDynamicsCompressor();
-      limiterNode.threshold.setValueAtTime(-1.0, ctx.currentTime);   // -1 dB ceiling
+      limiterNode.threshold.setValueAtTime(-1.0, ctx.currentTime);
       limiterNode.knee.setValueAtTime(0, ctx.currentTime);
-      limiterNode.ratio.setValueAtTime(20, ctx.currentTime);         // 20:1 brickwall
-      limiterNode.attack.setValueAtTime(0.001, ctx.currentTime);     // 1ms
-      limiterNode.release.setValueAtTime(0.05, ctx.currentTime);     // 50ms
+      limiterNode.ratio.setValueAtTime(20, ctx.currentTime);
+      limiterNode.attack.setValueAtTime(0.001, ctx.currentTime);
+      limiterNode.release.setValueAtTime(0.05, ctx.currentTime);
 
-      // Analyser node: measures RMS and peak levels in real-time
+      // Analyser Node
       analyserNode = ctx.createAnalyser();
       analyserNode.fftSize = 512;
-      analyserNode.smoothingTimeConstant = 0.3;
+      analyserNode.smoothingTimeConstant = 0.25;
       pcmData = new Float32Array(analyserNode.fftSize);
 
-      // Connect graph:
-      // Video Source -> MasterGain -> AGCGain -> Compressor -> Limiter -> Analyser -> Output
+      // Chain: Media -> MasterGain -> AGCGain -> Compressor -> Limiter -> Analyser -> Speakers
       sourceNode.connect(masterGainNode);
       masterGainNode.connect(agcGainNode);
       agcGainNode.connect(compressorNode);
@@ -128,9 +172,9 @@
       limiterNode.connect(analyserNode);
       analyserNode.connect(ctx.destination);
 
-      // Event listeners for play/pause/track switch
+      // Media event listeners
       const onPlay = () => {
-        isVideoPlaying = true;
+        isMediaPlaying = true;
         if (ctx.state === 'suspended') {
           ctx.resume().catch(() => {});
         }
@@ -138,73 +182,91 @@
       };
 
       const onPause = () => {
-        isVideoPlaying = false;
+        isMediaPlaying = false;
       };
 
-      // Reset AGC gain when a new track/video begins
       const onTrackChange = () => {
-        resetAgcGain();
+        detectCurrentVideo();
+        applyGainImmediately();
       };
 
-      videoEl.addEventListener('play', onPlay);
-      videoEl.addEventListener('playing', onPlay);
-      videoEl.addEventListener('pause', onPause);
-      videoEl.addEventListener('ended', onPause);
-      videoEl.addEventListener('loadstart', onTrackChange);
+      mediaEl.addEventListener('play', onPlay);
+      mediaEl.addEventListener('playing', onPlay);
+      mediaEl.addEventListener('pause', onPause);
+      mediaEl.addEventListener('ended', onPause);
+      mediaEl.addEventListener('loadstart', onTrackChange);
 
-      if (!videoEl.paused) {
+      if (!mediaEl.paused) {
         onPlay();
       }
 
-      applyConfigToAudioGraph();
-      console.log('[SmartBooster] Audio graph successfully attached to YouTube player.');
+      applyGainImmediately();
+      startAgcLoop();
+      console.log('[SmartBooster] Web Audio graph hooked successfully.');
       return true;
     } catch (err) {
-      console.warn('[SmartBooster] Error hooking audio source:', err);
+      console.warn('[SmartBooster] Audio hook notice:', err);
       return false;
     }
   }
 
-  // Reset AGC gain smoothly to 1.0 (neutral) on track transition
-  function resetAgcGain() {
-    if (!audioCtx || !agcGainNode) return;
-    const now = audioCtx.currentTime;
-    agcGainNode.gain.cancelScheduledValues(now);
-    agcGainNode.gain.setTargetAtTime(1.0, now, 0.05);
-    currentGainValue = 1.0;
+  // Determine if current video has custom setting
+  function getCustomSettingForCurrentVideo() {
+    detectCurrentVideo();
+    if (currentVideoId && customVideos[currentVideoId] && customVideos[currentVideoId].enabled) {
+      return customVideos[currentVideoId];
+    }
+    return null;
   }
 
-  // Update audio graph parameters whenever user settings change
-  function applyConfigToAudioGraph() {
+  // Instant gain application (called in real-time when user drags a slider)
+  function applyGainImmediately() {
     if (!audioCtx || !masterGainNode || !agcGainNode || !limiterNode) return;
 
     const now = audioCtx.currentTime;
 
+    // Extension disabled completely
     if (!config.enabled) {
-      // Bypass mode: direct neutral sound
-      masterGainNode.gain.setTargetAtTime(1.0, now, 0.05);
-      agcGainNode.gain.setTargetAtTime(1.0, now, 0.05);
-      limiterNode.ratio.setTargetAtTime(1.0, now, 0.05);
+      masterGainNode.gain.cancelScheduledValues(now);
+      masterGainNode.gain.setTargetAtTime(1.0, now, 0.02);
+      agcGainNode.gain.cancelScheduledValues(now);
+      agcGainNode.gain.setTargetAtTime(1.0, now, 0.02);
+      limiterNode.ratio.setTargetAtTime(1.0, now, 0.02);
       currentGainValue = 1.0;
       return;
     }
 
-    // Safety limiter enabled / disabled
-    limiterNode.ratio.setTargetAtTime(config.limiter ? 20.0 : 1.0, now, 0.05);
+    // Safety limiter
+    limiterNode.ratio.setTargetAtTime(config.limiter ? 20.0 : 1.0, now, 0.02);
+
+    const custom = getCustomSettingForCurrentVideo();
+    if (custom) {
+      // Per-video custom mode takes priority!
+      const targetG = parseFloat(custom.gain) || 1.8;
+      masterGainNode.gain.cancelScheduledValues(now);
+      masterGainNode.gain.setTargetAtTime(targetG, now, 0.02);
+      agcGainNode.gain.cancelScheduledValues(now);
+      agcGainNode.gain.setTargetAtTime(1.0, now, 0.02);
+      currentGainValue = targetG;
+      return;
+    }
 
     if (config.mode === 'manual') {
-      // Fixed manual gain
-      masterGainNode.gain.setTargetAtTime(config.manualGain, now, 0.05);
-      agcGainNode.gain.setTargetAtTime(1.0, now, 0.05);
-      currentGainValue = config.manualGain;
+      // Manual fixed mode
+      const manualG = parseFloat(config.manualGain) || 1.8;
+      masterGainNode.gain.cancelScheduledValues(now);
+      masterGainNode.gain.setTargetAtTime(manualG, now, 0.02);
+      agcGainNode.gain.cancelScheduledValues(now);
+      agcGainNode.gain.setTargetAtTime(1.0, now, 0.02);
+      currentGainValue = manualG;
     } else {
-      // Auto AGC Leveler mode
-      masterGainNode.gain.setTargetAtTime(1.0, now, 0.05);
-      // agcGainNode will be modulated dynamically by the AGC loop
+      // Auto mode: masterGain is 1.0, agcGain is dynamic
+      masterGainNode.gain.cancelScheduledValues(now);
+      masterGainNode.gain.setTargetAtTime(1.0, now, 0.02);
     }
   }
 
-  // Real-time AGC (Automatic Gain Control) processing loop
+  // Real-time AGC loop
   function startAgcLoop() {
     if (agcLoopId) return;
 
@@ -216,17 +278,16 @@
         return;
       }
 
-      // Check if video is playing
-      if (currentVideoEl && (currentVideoEl.paused || currentVideoEl.muted)) {
+      // Check if media is playing
+      if (currentMediaEl && (currentMediaEl.paused || currentMediaEl.muted)) {
         currentRMS = 0;
         agcLoopId = requestAnimationFrame(loop);
         return;
       }
 
-      // Get waveform samples
+      // Read audio data
       analyserNode.getFloatTimeDomainData(pcmData);
 
-      // Compute RMS (Root Mean Square) volume level
       let sum = 0;
       for (let i = 0; i < pcmData.length; i++) {
         sum += pcmData[i] * pcmData[i];
@@ -234,33 +295,31 @@
       const rawRms = Math.sqrt(sum / pcmData.length);
       currentRMS = rawRms;
 
-      // AGC computation (only active in auto mode)
-      if (config.mode === 'auto' && agcGainNode) {
-        // Noise gate / silence threshold (ignore pure silence/intro pause)
+      const custom = getCustomSettingForCurrentVideo();
+
+      // Only run auto dynamic leveling if in AUTO mode and NOT in per-video custom mode
+      if (config.mode === 'auto' && !custom && agcGainNode) {
         if (rawRms > 0.008) {
-          // Smooth the measured RMS (EMA)
-          smoothedRms = smoothedRms * 0.92 + rawRms * 0.08;
-
-          // Target ratio: how much boost is needed to reach target level?
+          smoothedRms = smoothedRms * 0.9 + rawRms * 0.1;
           const desiredGain = config.targetLevel / Math.max(smoothedRms, 0.005);
-
-          // Constrain between 1.0 (never reduce below standard) and maxBoost
           const targetGain = Math.min(Math.max(desiredGain, 1.0), config.maxBoost);
 
           const now = audioCtx.currentTime;
-          if (targetGain < currentGainValue) {
-            // Volume is increasing (or track became louder): fast attack (50ms) to prevent loud bursts!
+          const currentVal = agcGainNode.gain.value;
+
+          if (targetGain < currentVal) {
+            // Loud sound detected: fast attack (50ms) to prevent blast
             agcGainNode.gain.setTargetAtTime(targetGain, now, 0.05);
           } else {
-            // Volume is too quiet: gently ramp up gain (600ms release) to avoid awkward pumping
-            agcGainNode.gain.setTargetAtTime(targetGain, now, 0.6);
+            // Quiet sound: smooth gentle release (400ms)
+            agcGainNode.gain.setTargetAtTime(targetGain, now, 0.4);
           }
-          currentGainValue = targetGain;
+          currentGainValue = agcGainNode.gain.value;
         } else {
-          // Very quiet or silence: gently decay gain back toward 1.0 so next sound starts cleanly
+          // Silence or very low noise: decay toward 1.0
           const now = audioCtx.currentTime;
-          agcGainNode.gain.setTargetAtTime(1.0, now, 1.0);
-          currentGainValue = 1.0;
+          agcGainNode.gain.setTargetAtTime(1.0, now, 0.8);
+          currentGainValue = agcGainNode.gain.value;
         }
       }
 
@@ -270,47 +329,61 @@
     agcLoopId = requestAnimationFrame(loop);
   }
 
-  // Observer & hook finder: detect video elements dynamically
-  function scanAndHookVideo() {
-    const video = document.querySelector('video');
-    if (video && !video.__smartBoosterHooked) {
-      setupAudioGraph(video);
+  // Scan for <video> or <audio> in the page
+  function scanAndHook() {
+    const media = document.querySelector('video') || document.querySelector('audio');
+    if (media && !media.__smartBoosterHooked) {
+      setupAudioGraph(media);
     }
   }
 
-  // Listen to YouTube SPA navigation events
+  // Navigation and URL watchers
+  let lastUrl = window.location.href;
+  setInterval(() => {
+    if (window.location.href !== lastUrl) {
+      lastUrl = window.location.href;
+      detectCurrentVideo();
+      applyGainImmediately();
+      scanAndHook();
+    }
+  }, 500);
+
   window.addEventListener('yt-navigate-finish', () => {
-    resetAgcGain();
-    scanAndHookVideo();
+    detectCurrentVideo();
+    applyGainImmediately();
+    scanAndHook();
   });
 
   window.addEventListener('yt-page-data-updated', () => {
-    scanAndHookVideo();
+    detectCurrentVideo();
+    scanAndHook();
   });
 
-  // User gesture listeners to unlock AudioContext if suspended
-  const unlockAudioContext = () => {
+  // User gesture unlock for AudioContext
+  const unlockAudio = () => {
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume().catch(() => {});
     }
   };
-  document.addEventListener('click', unlockAudioContext, { passive: true });
-  document.addEventListener('keydown', unlockAudioContext, { passive: true });
+  document.addEventListener('click', unlockAudio, { passive: true });
+  document.addEventListener('keydown', unlockAudio, { passive: true });
 
-  // MutationObserver for YouTube's dynamic player insertions
+  // DOM MutationObserver
   const observer = new MutationObserver(() => {
-    scanAndHookVideo();
+    scanAndHook();
   });
-
   observer.observe(document.documentElement || document.body, {
     childList: true,
     subtree: true
   });
 
-  // Listen for messages from the popup
+  // Message Handler for Popup
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      detectCurrentVideo();
+
       if (message.type === 'GET_METRICS') {
+        const custom = getCustomSettingForCurrentVideo();
         sendResponse({
           connected: !!sourceNode,
           enabled: config.enabled,
@@ -321,20 +394,45 @@
           targetLevel: config.targetLevel,
           manualGain: config.manualGain,
           limiter: config.limiter,
-          isPlaying: isVideoPlaying
+          isPlaying: isMediaPlaying,
+          // Video info
+          videoId: currentVideoId,
+          videoTitle: currentVideoTitle,
+          hasCustomForThisVideo: !!custom,
+          customGainForThisVideo: custom ? custom.gain : 2.0
         });
       } else if (message.type === 'UPDATE_CONFIG') {
         config = Object.assign(config, message.config);
         saveConfig();
-        applyConfigToAudioGraph();
+        applyGainImmediately();
         sendResponse({ success: true, config: config });
+      } else if (message.type === 'SET_CUSTOM_VIDEO') {
+        const { videoId, gain, enabled, title } = message;
+        if (videoId) {
+          if (enabled) {
+            customVideos[videoId] = {
+              gain: parseFloat(gain) || 2.0,
+              title: title || currentVideoTitle || 'Vidéo YouTube',
+              enabled: true,
+              updatedAt: Date.now()
+            };
+          } else {
+            delete customVideos[videoId];
+          }
+          saveCustomVideos();
+          applyGainImmediately();
+          sendResponse({ success: true, customVideos: customVideos });
+        }
+      } else if (message.type === 'PING') {
+        sendResponse({ alive: true });
       }
-      return true; // Keep message channel open for async response
+      return true;
     });
   }
 
-  // Initial setup
-  loadConfig(() => {
-    scanAndHookVideo();
+  // Init
+  loadSettings(() => {
+    detectCurrentVideo();
+    scanAndHook();
   });
 })();

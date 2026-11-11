@@ -1,10 +1,16 @@
 {
   "manifest_version": 3,
   "name": "YouTube Smart Volume Booster & Auto-Leveler",
-  "version": "1.0.0",
-  "description": "Égalise et booste automatiquement les vidéos et musiques trop basses sur YouTube & YouTube Music sans saturer les morceaux normaux.",
+  "version": "1.1.0",
+  "description": "Normalise et booste le volume sur YouTube & YouTube Music avec ajustement et mémorisation personnalisée par vidéo.",
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://music.youtube.com/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",
