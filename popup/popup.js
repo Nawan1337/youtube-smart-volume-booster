@@ -1,6 +1,6 @@
 /**
  * YouTube Smart Volume Booster & Auto-Leveler
- * Popup Logic (v1.1.2 - Headroom up to x8.0 with Clickable Step Notches)
+ * Popup Logic (v1.1.3 - Steppers -0.25/+0.25, Crans x1-x10, Dual Storage Sync)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const limiterCheck = document.getElementById('limiterCheck');
   const presetButtons = document.querySelectorAll('.preset-btn');
   const stepTickButtons = document.querySelectorAll('.step-tick');
+  const stepperButtons = document.querySelectorAll('.stepper-btn');
 
   let targetTabId = null;
   let currentVideoId = null;
@@ -137,9 +138,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function formatGainLabel(val) {
-    const dB = 20 * Math.log10(val);
+    const num = parseFloat(val);
+    const formatted = (num % 1 === 0) ? num.toFixed(1) : (num % 0.1 === 0 ? num.toFixed(1) : num.toFixed(2));
+    const dB = 20 * Math.log10(num);
     const sign = dB >= 0 ? '+' : '';
-    return `x${parseFloat(val).toFixed(1)} (${sign}${dB.toFixed(1)} dB)`;
+    return `x${formatted} (${sign}${dB.toFixed(1)} dB)`;
   }
 
   function renderGlobalConfigUI() {
@@ -301,7 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isChecked = e.target.checked;
     if (isChecked) {
       customSliderGroup.classList.remove('hidden');
-      const val = parseFloat(customGainSlider.value) || 2.2;
+      const val = parseFloat(customGainSlider.value) || 2.25;
       customGainVal.textContent = formatGainLabel(val);
       sendCustomVideoUpdate(true, val);
     } else {
@@ -355,7 +358,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sendConfigUpdate({ limiter: e.target.checked });
   });
 
-  // Clickable Crans / Step Ticks (x1, x2, x4, x6, x8)
+  // Clickable Crans (x1, x2, x4, x6, x8, x10)
   stepTickButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       const targetInputId = btn.dataset.targetInput;
@@ -375,6 +378,36 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (targetInputId === 'manualGainSlider') {
         manualGainVal.textContent = formatGainLabel(val);
         sendConfigUpdate({ manualGain: val });
+      }
+    });
+  });
+
+  // Stepper Buttons (-0.25 and +0.25)
+  stepperButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const targetInputId = btn.dataset.targetInput;
+      const step = parseFloat(btn.dataset.step) || 0.25;
+      const input = document.getElementById(targetInputId);
+      if (!input) return;
+
+      let current = parseFloat(input.value) || 1.0;
+      let nextVal = Math.round((current + step) * 100) / 100;
+      const minVal = parseFloat(input.min) || 1.0;
+      const maxVal = parseFloat(input.max) || 10.0;
+
+      nextVal = Math.min(Math.max(nextVal, minVal), maxVal);
+      input.value = nextVal;
+
+      if (targetInputId === 'customGainSlider') {
+        customGainVal.textContent = formatGainLabel(nextVal);
+        sendCustomVideoUpdate(true, nextVal);
+      } else if (targetInputId === 'maxBoostSlider') {
+        maxBoostVal.textContent = formatGainLabel(nextVal);
+        presetButtons.forEach((b) => b.classList.remove('active'));
+        sendConfigUpdate({ maxBoost: nextVal });
+      } else if (targetInputId === 'manualGainSlider') {
+        manualGainVal.textContent = formatGainLabel(nextVal);
+        sendConfigUpdate({ manualGain: nextVal });
       }
     });
   });
