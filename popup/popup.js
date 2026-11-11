@@ -1,10 +1,9 @@
 /**
  * YouTube Smart Volume Booster & Auto-Leveler
- * Popup Logic (v1.1.0 with Per-Video Memory & Realtime Sliders)
+ * Popup Logic (v1.1.1 - Bulletproof YouTube Tab Discovery & Dual Sync)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Elements
   const powerToggle = document.getElementById('powerToggle');
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
@@ -12,7 +11,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const meterBar = document.getElementById('meterBar');
   const meterMarker = document.getElementById('meterMarker');
 
-  // Video Card Elements
   const videoTitleText = document.getElementById('videoTitleText');
   const customVideoToggle = document.getElementById('customVideoToggle');
   const customSliderGroup = document.getElementById('customSliderGroup');
@@ -20,7 +18,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const customGainVal = document.getElementById('customGainVal');
   const resetVideoBtn = document.getElementById('resetVideoBtn');
 
-  // Global Controls
   const tabAuto = document.getElementById('tabAuto');
   const tabManual = document.getElementById('tabManual');
   const panelAuto = document.getElementById('panelAuto');
@@ -35,10 +32,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const limiterCheck = document.getElementById('limiterCheck');
   const presetButtons = document.querySelectorAll('.preset-btn');
 
-  let activeTabId = null;
+  let targetTabId = null;
   let currentVideoId = null;
   let currentVideoTitle = '';
   let pollInterval = null;
+  let consecutiveErrors = 0;
 
   let globalConfig = {
     enabled: true,
@@ -49,47 +47,79 @@ document.addEventListener('DOMContentLoaded', () => {
     limiter: true
   };
 
-  // 1. Identify active tab and connect
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (!tabs || tabs.length === 0) return;
-    const tab = tabs[0];
-    activeTabId = tab.id;
-
-    const isYouTube = tab.url && (tab.url.includes('youtube.com') || tab.url.includes('music.youtube.com'));
-
-    // Try communicating directly with content script
-    pingAndConnect(tab.id, isYouTube);
+  // Find the real YouTube tab (Active window, or any audible/active YouTube tab)
+  findYouTubeTab((tab) => {
+    if (!tab) {
+      markDisconnected('Ouvrez YouTube / YT Music');
+      return;
+    }
+    targetTabId = tab.id;
+    connectToTab(tab.id);
   });
 
-  function pingAndConnect(tabId, isYouTube) {
-    chrome.tabs.sendMessage(tabId, { type: 'GET_METRICS' }, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        // Content script might not be injected yet (e.g. tab opened before extension installed)
-        if (isYouTube && chrome.scripting) {
-          statusText.textContent = 'Connexion au lecteur...';
+  function findYouTubeTab(callback) {
+    // 1. Try active tab in last focused window
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (tabs && tabs[0] && isYouTubeUrl(tabs[0].url)) {
+        return callback(tabs[0]);
+      }
+      // 2. Try active tab in any current window
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs2) => {
+        if (tabs2 && tabs2[0] && isYouTubeUrl(tabs2[0].url)) {
+          return callback(tabs2[0]);
+        }
+        // 3. Fallback: find any open YouTube tab (prioritize audible/playing tabs)
+        chrome.tabs.query({ url: ['*://*.youtube.com/*', '*://youtube.com/*', '*://music.youtube.com/*'] }, (ytTabs) => {
+          if (ytTabs && ytTabs.length > 0) {
+            const chosen = ytTabs.find(t => t.audible) || ytTabs.find(t => t.active) || ytTabs[0];
+            return callback(chosen);
+          }
+          callback(null);
+        });
+      });
+    });
+  }
+
+  function isYouTubeUrl(url) {
+    if (!url) return false;
+    return url.includes('youtube.com') || url.includes('music.youtube.com');
+  }
+
+  function connectToTab(tabId) {
+    statusText.textContent = 'Connexion...';
+
+    // Load initial settings from storage
+    chrome.storage.sync.get(['ytBoosterConfig'], (result) => {
+      if (result && result.ytBoosterConfig) {
+        globalConfig = Object.assign(globalConfig, result.ytBoosterConfig);
+      }
+      renderGlobalConfigUI();
+    });
+
+    // Ping content script
+    chrome.tabs.sendMessage(tabId, { type: 'GET_METRICS' }, (res) => {
+      if (chrome.runtime.lastError || !res) {
+        // Content script might need to be injected dynamically
+        if (chrome.scripting) {
           chrome.scripting.executeScript(
-            {
-              target: { tabId: tabId },
-              files: ['content.js']
-            },
+            { target: { tabId: tabId }, files: ['content.js'] },
             () => {
-              // Retry ping after injection
               setTimeout(() => {
                 chrome.tabs.sendMessage(tabId, { type: 'GET_METRICS' }, (res2) => {
                   if (res2) {
                     onConnected(res2);
                   } else {
-                    markDisconnected('Actualisez la page YouTube (F5)');
+                    markDisconnected('Actualisez YouTube (F5)');
                   }
                 });
-              }, 200);
+              }, 250);
             }
           );
         } else {
-          markDisconnected('Ouvrez YouTube / YT Music');
+          markDisconnected('Actualisez YouTube (F5)');
         }
       } else {
-        onConnected(response);
+        onConnected(res);
       }
     });
   }
@@ -100,26 +130,17 @@ document.addEventListener('DOMContentLoaded', () => {
     gainBadge.textContent = 'Inactif';
     gainBadge.className = 'gain-badge';
     meterBar.style.width = '0%';
-    videoTitleText.textContent = 'Aucune vidéo active';
   }
 
   function onConnected(metrics) {
+    consecutiveErrors = 0;
     statusDot.className = 'dot connected';
     statusText.textContent = metrics.isPlaying ? 'Audio actif' : 'Lecteur prêt';
-
-    // Load initial settings
-    chrome.storage.sync.get(['ytBoosterConfig'], (result) => {
-      if (result && result.ytBoosterConfig) {
-        globalConfig = Object.assign(globalConfig, result.ytBoosterConfig);
-      }
-      renderGlobalConfigUI();
-    });
 
     updateVideoCard(metrics);
     startPolling();
   }
 
-  // 2. Render UI for Global settings
   function renderGlobalConfigUI() {
     powerToggle.checked = globalConfig.enabled;
     limiterCheck.checked = globalConfig.limiter;
@@ -146,11 +167,10 @@ document.addEventListener('DOMContentLoaded', () => {
     meterMarker.style.left = `${markerPct}%`;
   }
 
-  // 3. Update Video Card UI
   function updateVideoCard(metrics) {
     if (metrics.videoId) {
       currentVideoId = metrics.videoId;
-      currentVideoTitle = metrics.videoTitle || 'Vidéo en cours';
+      currentVideoTitle = metrics.videoTitle || 'Vidéo YouTube';
       videoTitleText.textContent = currentVideoTitle;
       videoTitleText.title = currentVideoTitle;
 
@@ -171,51 +191,74 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 4. Send Instant Config Update
+  // Instant Dual-Sync (Storage + Message)
   function sendConfigUpdate(newPartial) {
     globalConfig = Object.assign(globalConfig, newPartial);
     chrome.storage.sync.set({ ytBoosterConfig: globalConfig });
 
-    if (activeTabId) {
-      chrome.tabs.sendMessage(activeTabId, {
+    if (targetTabId) {
+      chrome.tabs.sendMessage(targetTabId, {
         type: 'UPDATE_CONFIG',
         config: globalConfig
+      }, () => {
+        if (chrome.runtime.lastError) {}
       });
     }
   }
 
-  // 5. Send Per-Video Custom Update
   function sendCustomVideoUpdate(enabled, gain) {
-    if (!activeTabId || !currentVideoId) return;
+    if (!currentVideoId) return;
 
-    chrome.tabs.sendMessage(activeTabId, {
-      type: 'SET_CUSTOM_VIDEO',
-      videoId: currentVideoId,
-      title: currentVideoTitle,
-      enabled: enabled,
-      gain: gain
+    // Update storage directly
+    chrome.storage.sync.get(['ytCustomVideos'], (res) => {
+      let customVideos = (res && res.ytCustomVideos) ? res.ytCustomVideos : {};
+      if (enabled) {
+        customVideos[currentVideoId] = {
+          gain: parseFloat(gain) || 2.0,
+          title: currentVideoTitle || 'Vidéo YouTube',
+          enabled: true,
+          updatedAt: Date.now()
+        };
+      } else {
+        delete customVideos[currentVideoId];
+      }
+      chrome.storage.sync.set({ ytCustomVideos: customVideos });
     });
+
+    if (targetTabId) {
+      chrome.tabs.sendMessage(targetTabId, {
+        type: 'SET_CUSTOM_VIDEO',
+        videoId: currentVideoId,
+        title: currentVideoTitle,
+        enabled: enabled,
+        gain: gain
+      }, () => {
+        if (chrome.runtime.lastError) {}
+      });
+    }
   }
 
-  // 6. Real-time Metric Polling
   function startPolling() {
     if (pollInterval) clearInterval(pollInterval);
 
     pollInterval = setInterval(() => {
-      if (!activeTabId) return;
+      if (!targetTabId) return;
 
-      chrome.tabs.sendMessage(activeTabId, { type: 'GET_METRICS' }, (res) => {
+      chrome.tabs.sendMessage(targetTabId, { type: 'GET_METRICS' }, (res) => {
         if (chrome.runtime.lastError || !res) {
-          markDisconnected('Lecteur en pause / hors ligne');
+          consecutiveErrors++;
+          if (consecutiveErrors > 3) {
+            markDisconnected('Lecteur en pause / en chargement');
+          }
           return;
         }
 
+        consecutiveErrors = 0;
         statusDot.className = res.connected ? 'dot connected' : 'dot';
         statusText.textContent = res.connected
           ? (res.isPlaying ? 'Audio actif' : 'En pause')
           : 'Lecteur détecté';
 
-        // Gain Badge
         const gainVal = res.currentGain || 1.0;
         const dB = 20 * Math.log10(gainVal);
         const dBStr = `${dB >= 0 ? '+' : ''}${dB.toFixed(1)} dB`;
@@ -238,7 +281,6 @@ document.addEventListener('DOMContentLoaded', () => {
           gainBadge.style.color = '#00d284';
         }
 
-        // Realtime VU-Meter
         if (res.enabled && res.isPlaying) {
           const rmsPct = Math.min((res.currentRMS / 0.35) * 100, 100);
           meterBar.style.width = `${rmsPct.toFixed(1)}%`;
@@ -246,7 +288,6 @@ document.addEventListener('DOMContentLoaded', () => {
           meterBar.style.width = '0%';
         }
 
-        // Update video title if track changed in playlist
         if (res.videoId && res.videoId !== currentVideoId) {
           updateVideoCard(res);
         }
@@ -254,14 +295,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 100);
   }
 
-  // --- Event Listeners ---
-
-  // Power switch
+  // User Actions
   powerToggle.addEventListener('change', (e) => {
     sendConfigUpdate({ enabled: e.target.checked });
   });
 
-  // Per-video toggle
   customVideoToggle.addEventListener('change', (e) => {
     const isChecked = e.target.checked;
     if (isChecked) {
@@ -276,7 +314,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Per-video slider (Instant real-time audio update on drag)
   customGainSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
     const dB = (20 * Math.log10(val)).toFixed(1);
@@ -284,14 +321,12 @@ document.addEventListener('DOMContentLoaded', () => {
     sendCustomVideoUpdate(true, val);
   });
 
-  // Reset per-video button
   resetVideoBtn.addEventListener('click', () => {
     customVideoToggle.checked = false;
     customSliderGroup.classList.add('hidden');
     sendCustomVideoUpdate(false, 1.0);
   });
 
-  // Global Tabs
   tabAuto.addEventListener('click', () => {
     tabAuto.classList.add('active');
     tabManual.classList.remove('active');
@@ -308,7 +343,6 @@ document.addEventListener('DOMContentLoaded', () => {
     sendConfigUpdate({ mode: 'manual' });
   });
 
-  // Global Boost Slider (Instant real-time update)
   maxBoostSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
     maxBoostVal.textContent = `x${val.toFixed(1)}`;
@@ -316,38 +350,27 @@ document.addEventListener('DOMContentLoaded', () => {
     sendConfigUpdate({ maxBoost: val });
   });
 
-  // Global Manual Gain Slider (Instant real-time update)
   manualGainSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
     manualGainVal.textContent = `x${val.toFixed(1)}`;
     sendConfigUpdate({ manualGain: val });
   });
 
-  // Limiter check
   limiterCheck.addEventListener('change', (e) => {
     sendConfigUpdate({ limiter: e.target.checked });
   });
 
-  // Quick presets
   presetButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       presetButtons.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-
       const target = parseFloat(btn.dataset.target);
       const maxB = parseFloat(btn.dataset.max);
-
       maxBoostSlider.value = maxB;
       maxBoostVal.textContent = `x${maxB.toFixed(1)}`;
-
       const markerPct = Math.min(Math.max((target / 0.35) * 100, 10), 90);
       meterMarker.style.left = `${markerPct}%`;
-
-      sendConfigUpdate({
-        targetLevel: target,
-        maxBoost: maxB,
-        mode: 'auto'
-      });
+      sendConfigUpdate({ targetLevel: target, maxBoost: maxB, mode: 'auto' });
     });
   });
 });
