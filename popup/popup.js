@@ -1,6 +1,6 @@
 /**
  * YouTube Smart Volume Booster & Auto-Leveler
- * Popup Logic (v1.1.1 - Bulletproof YouTube Tab Discovery & Dual Sync)
+ * Popup Logic (v1.1.2 - Headroom up to x8.0 with Clickable Step Notches)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const limiterCheck = document.getElementById('limiterCheck');
   const presetButtons = document.querySelectorAll('.preset-btn');
+  const stepTickButtons = document.querySelectorAll('.step-tick');
 
   let targetTabId = null;
   let currentVideoId = null;
@@ -41,13 +42,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let globalConfig = {
     enabled: true,
     mode: 'auto',
-    maxBoost: 3.0,
+    maxBoost: 3.5,
     targetLevel: 0.15,
-    manualGain: 1.8,
+    manualGain: 2.0,
     limiter: true
   };
 
-  // Find the real YouTube tab (Active window, or any audible/active YouTube tab)
+  // Find the real YouTube tab
   findYouTubeTab((tab) => {
     if (!tab) {
       markDisconnected('Ouvrez YouTube / YT Music');
@@ -58,17 +59,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function findYouTubeTab(callback) {
-    // 1. Try active tab in last focused window
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       if (tabs && tabs[0] && isYouTubeUrl(tabs[0].url)) {
         return callback(tabs[0]);
       }
-      // 2. Try active tab in any current window
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs2) => {
         if (tabs2 && tabs2[0] && isYouTubeUrl(tabs2[0].url)) {
           return callback(tabs2[0]);
         }
-        // 3. Fallback: find any open YouTube tab (prioritize audible/playing tabs)
         chrome.tabs.query({ url: ['*://*.youtube.com/*', '*://youtube.com/*', '*://music.youtube.com/*'] }, (ytTabs) => {
           if (ytTabs && ytTabs.length > 0) {
             const chosen = ytTabs.find(t => t.audible) || ytTabs.find(t => t.active) || ytTabs[0];
@@ -88,7 +86,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function connectToTab(tabId) {
     statusText.textContent = 'Connexion...';
 
-    // Load initial settings from storage
     chrome.storage.sync.get(['ytBoosterConfig'], (result) => {
       if (result && result.ytBoosterConfig) {
         globalConfig = Object.assign(globalConfig, result.ytBoosterConfig);
@@ -96,10 +93,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderGlobalConfigUI();
     });
 
-    // Ping content script
     chrome.tabs.sendMessage(tabId, { type: 'GET_METRICS' }, (res) => {
       if (chrome.runtime.lastError || !res) {
-        // Content script might need to be injected dynamically
         if (chrome.scripting) {
           chrome.scripting.executeScript(
             { target: { tabId: tabId }, files: ['content.js'] },
@@ -141,15 +136,21 @@ document.addEventListener('DOMContentLoaded', () => {
     startPolling();
   }
 
+  function formatGainLabel(val) {
+    const dB = 20 * Math.log10(val);
+    const sign = dB >= 0 ? '+' : '';
+    return `x${parseFloat(val).toFixed(1)} (${sign}${dB.toFixed(1)} dB)`;
+  }
+
   function renderGlobalConfigUI() {
     powerToggle.checked = globalConfig.enabled;
     limiterCheck.checked = globalConfig.limiter;
 
     maxBoostSlider.value = globalConfig.maxBoost;
-    maxBoostVal.textContent = `x${parseFloat(globalConfig.maxBoost).toFixed(1)}`;
+    maxBoostVal.textContent = formatGainLabel(globalConfig.maxBoost);
 
     manualGainSlider.value = globalConfig.manualGain;
-    manualGainVal.textContent = `x${parseFloat(globalConfig.manualGain).toFixed(1)}`;
+    manualGainVal.textContent = formatGainLabel(globalConfig.manualGain);
 
     if (globalConfig.mode === 'auto') {
       tabAuto.classList.add('active');
@@ -178,8 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
         customVideoToggle.checked = true;
         customSliderGroup.classList.remove('hidden');
         customGainSlider.value = metrics.customGainForThisVideo;
-        const dB = (20 * Math.log10(metrics.customGainForThisVideo)).toFixed(1);
-        customGainVal.textContent = `x${parseFloat(metrics.customGainForThisVideo).toFixed(1)} (+${dB} dB)`;
+        customGainVal.textContent = formatGainLabel(metrics.customGainForThisVideo);
       } else {
         customVideoToggle.checked = false;
         customSliderGroup.classList.add('hidden');
@@ -191,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Instant Dual-Sync (Storage + Message)
   function sendConfigUpdate(newPartial) {
     globalConfig = Object.assign(globalConfig, newPartial);
     chrome.storage.sync.set({ ytBoosterConfig: globalConfig });
@@ -209,7 +208,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function sendCustomVideoUpdate(enabled, gain) {
     if (!currentVideoId) return;
 
-    // Update storage directly
     chrome.storage.sync.get(['ytCustomVideos'], (res) => {
       let customVideos = (res && res.ytCustomVideos) ? res.ytCustomVideos : {};
       if (enabled) {
@@ -260,8 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
           : 'Lecteur détecté';
 
         const gainVal = res.currentGain || 1.0;
-        const dB = 20 * Math.log10(gainVal);
-        const dBStr = `${dB >= 0 ? '+' : ''}${dB.toFixed(1)} dB`;
+        const dBStr = formatGainLabel(gainVal);
 
         if (!res.enabled) {
           gainBadge.className = 'gain-badge';
@@ -269,11 +266,11 @@ document.addEventListener('DOMContentLoaded', () => {
           gainBadge.style.color = '#8e8e9a';
         } else if (res.hasCustomForThisVideo) {
           gainBadge.className = 'gain-badge custom';
-          gainBadge.textContent = `⭐ x${gainVal.toFixed(1)} (${dBStr})`;
+          gainBadge.textContent = `⭐ ${dBStr}`;
           gainBadge.style.color = '';
         } else if (gainVal > 1.05) {
           gainBadge.className = 'gain-badge boosted';
-          gainBadge.textContent = `x${gainVal.toFixed(1)} (${dBStr})`;
+          gainBadge.textContent = dBStr;
           gainBadge.style.color = '';
         } else {
           gainBadge.className = 'gain-badge';
@@ -295,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 100);
   }
 
-  // User Actions
+  // --- User Actions ---
   powerToggle.addEventListener('change', (e) => {
     sendConfigUpdate({ enabled: e.target.checked });
   });
@@ -305,8 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (isChecked) {
       customSliderGroup.classList.remove('hidden');
       const val = parseFloat(customGainSlider.value) || 2.2;
-      const dB = (20 * Math.log10(val)).toFixed(1);
-      customGainVal.textContent = `x${val.toFixed(1)} (+${dB} dB)`;
+      customGainVal.textContent = formatGainLabel(val);
       sendCustomVideoUpdate(true, val);
     } else {
       customSliderGroup.classList.add('hidden');
@@ -316,8 +312,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   customGainSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
-    const dB = (20 * Math.log10(val)).toFixed(1);
-    customGainVal.textContent = `x${val.toFixed(1)} (+${dB} dB)`;
+    customGainVal.textContent = formatGainLabel(val);
     sendCustomVideoUpdate(true, val);
   });
 
@@ -345,14 +340,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   maxBoostSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
-    maxBoostVal.textContent = `x${val.toFixed(1)}`;
+    maxBoostVal.textContent = formatGainLabel(val);
     presetButtons.forEach((b) => b.classList.remove('active'));
     sendConfigUpdate({ maxBoost: val });
   });
 
   manualGainSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
-    manualGainVal.textContent = `x${val.toFixed(1)}`;
+    manualGainVal.textContent = formatGainLabel(val);
     sendConfigUpdate({ manualGain: val });
   });
 
@@ -360,6 +355,31 @@ document.addEventListener('DOMContentLoaded', () => {
     sendConfigUpdate({ limiter: e.target.checked });
   });
 
+  // Clickable Crans / Step Ticks (x1, x2, x4, x6, x8)
+  stepTickButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const targetInputId = btn.dataset.targetInput;
+      const val = parseFloat(btn.dataset.val);
+      const input = document.getElementById(targetInputId);
+      if (!input) return;
+
+      input.value = val;
+
+      if (targetInputId === 'customGainSlider') {
+        customGainVal.textContent = formatGainLabel(val);
+        sendCustomVideoUpdate(true, val);
+      } else if (targetInputId === 'maxBoostSlider') {
+        maxBoostVal.textContent = formatGainLabel(val);
+        presetButtons.forEach((b) => b.classList.remove('active'));
+        sendConfigUpdate({ maxBoost: val });
+      } else if (targetInputId === 'manualGainSlider') {
+        manualGainVal.textContent = formatGainLabel(val);
+        sendConfigUpdate({ manualGain: val });
+      }
+    });
+  });
+
+  // Presets
   presetButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       presetButtons.forEach((b) => b.classList.remove('active'));
@@ -367,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const target = parseFloat(btn.dataset.target);
       const maxB = parseFloat(btn.dataset.max);
       maxBoostSlider.value = maxB;
-      maxBoostVal.textContent = `x${maxB.toFixed(1)}`;
+      maxBoostVal.textContent = formatGainLabel(maxB);
       const markerPct = Math.min(Math.max((target / 0.35) * 100, 10), 90);
       meterMarker.style.left = `${markerPct}%`;
       sendConfigUpdate({ targetLevel: target, maxBoost: maxB, mode: 'auto' });

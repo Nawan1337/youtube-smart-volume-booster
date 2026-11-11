@@ -48,7 +48,7 @@
       </div>
     </section>
 
-    <!-- Per-Video Customization Card (New Feature!) -->
+    <!-- Per-Video Customization Card (Section Vidéo Détectée) -->
     <section class="video-card" id="videoCard">
       <div class="video-card-header">
         <div class="video-info">
@@ -66,9 +66,21 @@
         <div class="custom-slider-group hidden" id="customSliderGroup">
           <div class="label-with-value">
             <span class="sub-label">Volume pour cette vidéo</span>
-            <span class="value-display highlight" id="customGainVal">x2.2</span>
+            <span class="value-display highlight" id="customGainVal">x2.2 (+6.8 dB)</span>
           </div>
-          <input type="range" id="customGainSlider" min="1.0" max="5.0" step="0.1" value="2.2">
+          <!-- Slider avec plage jusqu'à x10.0 -->
+          <input type="range" id="customGainSlider" min="1.0" max="10.0" step="0.1" value="2.2" list="boostTicks">
+          
+          <!-- Crans cliquables rapides -->
+          <div class="step-ticks">
+            <button class="step-tick" data-target-input="customGainSlider" data-val="1.0">x1</button>
+            <button class="step-tick" data-target-input="customGainSlider" data-val="2.0">x2</button>
+            <button class="step-tick" data-target-input="customGainSlider" data-val="4.0">x4</button>
+            <button class="step-tick" data-target-input="customGainSlider" data-val="6.0">x6</button>
+            <button class="step-tick" data-target-input="customGainSlider" data-val="8.0">x8</button>
+            <button class="step-tick highlight-tick" data-target-input="customGainSlider" data-val="10.0">x10 🔥</button>
+          </div>
+
           <div class="saved-badge">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
@@ -107,18 +119,28 @@
       <div class="control-row">
         <div class="label-with-value">
           <label for="maxBoostSlider">Plafond de boost max</label>
-          <span class="value-display" id="maxBoostVal">x3.0</span>
+          <span class="value-display" id="maxBoostVal">x3.5 (+10.9 dB)</span>
         </div>
-        <input type="range" id="maxBoostSlider" min="1.5" max="5.0" step="0.1" value="3.0">
+        <input type="range" id="maxBoostSlider" min="1.0" max="10.0" step="0.1" value="3.5" list="boostTicks">
+        
+        <div class="step-ticks">
+          <button class="step-tick" data-target-input="maxBoostSlider" data-val="1.0">x1</button>
+          <button class="step-tick" data-target-input="maxBoostSlider" data-val="2.0">x2</button>
+          <button class="step-tick" data-target-input="maxBoostSlider" data-val="4.0">x4</button>
+          <button class="step-tick" data-target-input="maxBoostSlider" data-val="6.0">x6</button>
+          <button class="step-tick" data-target-input="maxBoostSlider" data-val="8.0">x8</button>
+          <button class="step-tick highlight-tick" data-target-input="maxBoostSlider" data-val="10.0">x10 🔥</button>
+        </div>
         <span class="help-text">Régule automatiquement les vidéos faibles jusqu'à ce plafond sans saturer les autres.</span>
       </div>
 
       <div class="control-row">
         <label class="sub-label">Profils rapides :</label>
         <div class="preset-buttons">
-          <button class="preset-btn" data-target="0.12" data-max="2.5">Discret</button>
-          <button class="preset-btn active" data-target="0.15" data-max="3.0">Mixte (Conseillé)</button>
-          <button class="preset-btn" data-target="0.22" data-max="4.5">Vidéos très basses</button>
+          <button class="preset-btn" data-target="0.12" data-max="2.0">Discret</button>
+          <button class="preset-btn active" data-target="0.15" data-max="3.5">Mixte</button>
+          <button class="preset-btn" data-target="0.22" data-max="6.0">Très basse</button>
+          <button class="preset-btn highlight-preset" data-target="0.30" data-max="8.0">Max x8 🔥</button>
         </div>
       </div>
     </div>
@@ -128,12 +150,35 @@
       <div class="control-row">
         <div class="label-with-value">
           <label for="manualGainSlider">Amplification fixe</label>
-          <span class="value-display" id="manualGainVal">x1.8</span>
+          <span class="value-display" id="manualGainVal">x2.0 (+6.0 dB)</span>
         </div>
-        <input type="range" id="manualGainSlider" min="1.0" max="4.0" step="0.1" value="1.8">
+        <input type="range" id="manualGainSlider" min="1.0" max="10.0" step="0.1" value="2.0" list="boostTicks">
+        
+        <div class="step-ticks">
+          <button class="step-tick" data-target-input="manualGainSlider" data-val="1.0">x1</button>
+          <button class="step-tick" data-target-input="manualGainSlider" data-val="2.0">x2</button>
+          <button class="step-tick" data-target-input="manualGainSlider" data-val="4.0">x4</button>
+          <button class="step-tick" data-target-input="manualGainSlider" data-val="6.0">x6</button>
+          <button class="step-tick" data-target-input="manualGainSlider" data-val="8.0">x8</button>
+          <button class="step-tick highlight-tick" data-target-input="manualGainSlider" data-val="10.0">x10 🔥</button>
+        </div>
         <span class="help-text">Applique un gain constant à toutes les vidéos (attention aux vidéos déjà fortes).</span>
       </div>
     </div>
+
+    <!-- Datalist crans -->
+    <datalist id="boostTicks">
+      <option value="1.0"></option>
+      <option value="2.0"></option>
+      <option value="3.0"></option>
+      <option value="4.0"></option>
+      <option value="5.0"></option>
+      <option value="6.0"></option>
+      <option value="7.0"></option>
+      <option value="8.0"></option>
+      <option value="9.0"></option>
+      <option value="10.0"></option>
+    </datalist>
 
     <!-- Safety Limiter Option -->
     <div class="footer-options">
