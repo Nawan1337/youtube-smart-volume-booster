@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube Smart Volume Booster</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+          </svg>
+        </div>
+        <div class="title-group">
+          <h1>Smart Booster</h1>
+          <span class="subtitle">YouTube & YT Music</span>
+        </div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="powerToggle" checked>
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <!-- Status & Live Meter -->
+    <section class="monitor-card" id="monitorCard">
+      <div class="monitor-header">
+        <div class="status-indicator">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusText">Recherche du lecteur...</span>
+        </div>
+        <div class="gain-badge" id="gainBadge">x1.0 (0 dB)</div>
+      </div>
+
+      <!-- Realtime Audio VU-Meter -->
+      <div class="meter-container">
+        <div class="meter-bar" id="meterBar"></div>
+        <div class="meter-target-marker" title="Niveau cible" id="meterMarker"></div>
+      </div>
+      <div class="meter-labels">
+        <span>Faible</span>
+        <span>Cible standard</span>
+        <span>Fort</span>
+      </div>
+    </section>
+
+    <!-- Mode Selector -->
+    <div class="mode-tabs">
+      <button class="tab active" data-mode="auto" id="tabAuto">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+        </svg>
+        Auto Égaliseur
+      </button>
+      <button class="tab" data-mode="manual" id="tabManual">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
+        Manuel Fixe
+      </button>
+    </div>
+
+    <!-- Auto Mode Controls -->
+    <div class="controls-panel" id="panelAuto">
+      <div class="control-row">
+        <div class="label-with-value">
+          <label for="maxBoostSlider">Plafond de boost max</label>
+          <span class="value-display" id="maxBoostVal">x3.0</span>
+        </div>
+        <input type="range" id="maxBoostSlider" min="1.5" max="5.0" step="0.1" value="3.0">
+        <span class="help-text">Les vidéos faibles sont remontées jusqu'à ce plafond sans saturer les autres.</span>
+      </div>
+
+      <div class="control-row">
+        <label>Profils rapides :</label>
+        <div class="preset-buttons">
+          <button class="preset-btn" data-target="0.12" data-max="2.5">Discret</button>
+          <button class="preset-btn active" data-target="0.15" data-max="3.0">Mixte (Conseillé)</button>
+          <button class="preset-btn" data-target="0.20" data-max="4.5">Vidéos très basses</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Mode Controls -->
+    <div class="controls-panel hidden" id="panelManual">
+      <div class="control-row">
+        <div class="label-with-value">
+          <label for="manualGainSlider">Amplification fixe</label>
+          <span class="value-display" id="manualGainVal">x1.8</span>
+        </div>
+        <input type="range" id="manualGainSlider" min="1.0" max="4.0" step="0.1" value="1.8">
+        <span class="help-text">Applique un gain constant à toutes les vidéos (attention aux vidéos fortes).</span>
+      </div>
+    </div>
+
+    <!-- Safety Limiter Option -->
+    <div class="footer-options">
+      <label class="checkbox-label">
+        <input type="checkbox" id="limiterCheck" checked>
+        <span>Limiteur anti-saturation (Protection oreilles & ampli)</span>
+      </label>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
